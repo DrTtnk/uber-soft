@@ -1,29 +1,45 @@
 import numpy as np
 
 
-def simulation_step(d_t, iterations, pos, prev_pos, edges, constraints, weights, colors):
+def simulation_step(d_t, iterations, pos, prev_pos, edges, constraints, weights, coloring):
+    pos = pos + (pos - prev_pos + d_t ** 2 * np.array([0, 0, -9.81])) * weights[:, np.newaxis]
+
     for _ in range(iterations):
-        for edge, constraint in zip(edges, constraints):
-            solve_edge_constraint(pos, edge, weights, constraint)
+        pos = solve_edge_constraints(pos, edges, weights, coloring, constraints)
 
-    new_positions = pos + (pos - prev_pos + d_t ** 2 * np.array([0, 0, -9.81])) * weights[:, np.newaxis]
-
-    return new_positions
+    return pos
 
 
-def solve_edge_constraints(pos, edges, weights, colors, d):
-    num_colors = np.max(colors) + 1
-    for color in range(num_colors):
-        color_edges = np.where(colors == color)[0]
-        p1 = pos[color_edges[0]]
-        p2 = pos[color_edges[1]]
-        w1 = weights[color_edges[0]]
-        w2 = weights[color_edges[1]]
+def solve_edge_constraints(pos, edges, weights, coloring, constraints):
+    max_corr = 0
+    for color in range(np.max(coloring) + 1):
+        color_edges = edges[coloring == color]
 
-        corr = (w1 + w2) * (np.linalg.norm(p1 - p2) - d) * (p1 - p2) / np.linalg.norm(p1 - p2)
+        if len(color_edges) == 0:
+            continue
 
-        pos[color_edges[0]] -= w1 / corr
-        pos[color_edges[1]] += w2 / corr
+        e1 = color_edges[:, 0]
+        e2 = color_edges[:, 1]
+        p1 = pos[e1]
+        p2 = pos[e2]
+        w1 = weights[e1]
+        w2 = weights[e2]
+        d = constraints[coloring == color]
+
+        dist = np.linalg.norm(p1 - p2, axis=1)
+
+        n = (p1 - p2) / dist[:, np.newaxis]
+        s = (dist - d) / (w1 + w2)
+        corr = n * s[:, np.newaxis]
+
+        max_corr = max(max_corr, np.max(np.abs(corr)))
+
+        pos[e1] -= w1[:, np.newaxis] * corr
+        pos[e2] += w2[:, np.newaxis] * corr
+
+    print(f'Max correction: {max_corr}')
+
+    return pos
 
 
 def solve_edge_constraint(pos, edge, weights, d):

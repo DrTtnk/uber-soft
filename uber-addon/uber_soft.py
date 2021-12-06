@@ -46,6 +46,7 @@ class Soft:
     weights = None
     edges = None
     running = False
+    coloring = None
 
     def __init__(self, obj: Object):
         self.obj = obj
@@ -53,20 +54,23 @@ class Soft:
     def update(self):
         if self.prev_state is None:
             self.prev_state, self.edges, self.weights, self.lengths = Soft.read_initial_state(self.obj)
-            with funcy.log_durations(print, label='Coloring Step'):
-                coloring = graph_coloring(self.edges)
-                print('Is valid coloring:', is_valid_coloring(self.edges, coloring))
             self.current_state = self.prev_state.copy()
 
-        return
+            with funcy.log_durations(print, label='Complement Step'):
+                complementary = constraints_graph(self.edges)
+            with funcy.log_durations(print, label='Coloring Step'):
+                self.coloring = graph_coloring(complementary)
 
-        new_state = simulation_step(d_t=1 / 60,
-                                    iterations=10,
+        iterations = 10
+
+        new_state = simulation_step(d_t=1.0 / 60,
+                                    iterations=iterations,
                                     pos=self.current_state.copy(),
                                     prev_pos=self.prev_state.copy(),
                                     edges=self.edges,
                                     weights=self.weights,
-                                    constraints=self.lengths)
+                                    constraints=self.lengths,
+                                    coloring=self.coloring)
         Soft.write_vertex_pos(self.obj, new_state)
         self.prev_state = self.current_state
         self.current_state = new_state
@@ -89,14 +93,16 @@ class Soft:
         edge_b = verts[edges[:, 1]]
         lengths = np.linalg.norm(edge_b - edge_a, axis=1)
 
-        # weights = np.zeros(vert_count, dtype=np.float64)
-        # for v in obj.data.vertices:
-        #     try:
-        #         weights[v.index] = v.groups[0].weight
-        #     except RuntimeError:
-        #         weights[v.index] = 0
-        #     except IndexError:
-        #         weights[v.index] = 0
+        weights = np.zeros(vert_count, dtype=np.float64)
+        for v in obj.data.vertices:
+            try:
+                weights[v.index] = v.groups[0].weight
+            except RuntimeError:
+                weights[v.index] = 0
+            except IndexError:
+                weights[v.index] = 0
+
+        # ToDo: remove this two lines
         weights = np.zeros(vert_count, dtype=np.float64)
         weights[0] = 1
 
@@ -189,8 +195,43 @@ def graph_coloring(edges):
                 vertex_palette[vertex]['size'] += 1
                 vertex_palette[vertex]['palette'] = list(range(vertex_palette[vertex]['size']))
 
-    return [vertex['color'] for vertex in vertex_palette]
+    return np.array([vertex['color'] for vertex in vertex_palette])
+
+
+def constraints_graph_old(edges):
+    graph = []
+    for current_edge_idx, current_edge in enumerate(edges):
+        for other_edge_idx, other_edge in enumerate(edges):
+            if current_edge_idx == other_edge_idx:
+                continue
+            if (current_edge[0] in other_edge) or (current_edge[1] in other_edge):
+                graph.append(sorted([current_edge_idx, other_edge_idx]))
+
+    # remove duplicates
+    return np.array(list(set(tuple(x) for x in graph)))
+
+
+def constraints_graph(edges):
+    vert_count = np.max(edges) + 1
+    verts_to_edges = {vert_idx: [] for vert_idx in range(vert_count)}
+    for edge_idx, edge in enumerate(edges):
+        for vert in edge:
+            verts_to_edges[vert].append(edge_idx)
+
+    graph = []
+    for edge_idx, edge in enumerate(edges):
+        for vert in edge:
+            for other_edge_idx in verts_to_edges[vert]:
+                if edge_idx == other_edge_idx:
+                    continue
+                other_edge = edges[other_edge_idx]
+                if (edge[0] in other_edge) or (edge[1] in other_edge):
+                    graph.append(sorted([edge_idx, other_edge_idx]))
+
+    # remove duplicates and convert to numpy array
+    return np.array(list(set(tuple(x) for x in graph)))
 
 
 def is_valid_coloring(edges, coloring):
-    return all(coloring[edge[0]] != coloring[edge[1]] for edge in edges)
+    # return all(coloring[edge[0]] != coloring[edge[1]] for edge in edges)
+    return np.all(np.diff(coloring) != 0)
