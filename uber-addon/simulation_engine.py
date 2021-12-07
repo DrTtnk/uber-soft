@@ -1,57 +1,53 @@
+import time
+
 import numpy as np
+import funcy as fy
+from cachetools import cached
 
 
 def simulation_step(d_t, iterations, pos, prev_pos, edges, constraints, weights, coloring):
-    pos = pos + (pos - prev_pos + d_t ** 2 * np.array([0, 0, -9.81])) * weights[:, np.newaxis]
-
+    d_t = d_t / iterations
+    max_residual = 0
     for _ in range(iterations):
-        pos = solve_edge_constraints(pos, edges, weights, coloring, constraints)
+        pos = pos + (pos - prev_pos + d_t ** 2 * np.array([0, 0, -9.81])) * weights[:, np.newaxis]
+        pos, max_residual = solve_edge_constraints(pos, edges, weights, coloring, constraints)
+        prev_pos = pos
+
+    print(f'Max residual: {max_residual}')
 
     return pos
 
 
 def solve_edge_constraints(pos, edges, weights, coloring, constraints):
-    max_corr = 0
+    max_residual = 0
     for color in range(np.max(coloring) + 1):
-        color_edges = edges[coloring == color]
+        d, e1, e2, w1, w2, w_sum = static_variables(color, coloring, constraints, edges, weights)
 
-        if len(color_edges) == 0:
-            continue
+        diff = pos[e1] - pos[e2]
 
-        e1 = color_edges[:, 0]
-        e2 = color_edges[:, 1]
-        p1 = pos[e1]
-        p2 = pos[e2]
-        w1 = weights[e1]
-        w2 = weights[e2]
-        d = constraints[coloring == color]
+        dist = np.linalg.norm(diff, axis=1)
 
-        dist = np.linalg.norm(p1 - p2, axis=1)
+        s = (dist - d) / w_sum
+        corr = diff / dist[:, np.newaxis] * s[:, np.newaxis]
 
-        n = (p1 - p2) / dist[:, np.newaxis]
-        s = (dist - d) / (w1 + w2)
-        corr = n * s[:, np.newaxis]
-
-        max_corr = max(max_corr, np.max(np.abs(corr)))
+        max_residual = max(max_residual, np.linalg.norm(corr))
 
         pos[e1] -= w1[:, np.newaxis] * corr
         pos[e2] += w2[:, np.newaxis] * corr
 
-    print(f'Max correction: {max_corr}')
-
-    return pos
+    return pos, max_residual
 
 
-def solve_edge_constraint(pos, edge, weights, d):
-    p1 = pos[edge[0]]
-    p2 = pos[edge[1]]
-    w1 = weights[edge[0]]
-    w2 = weights[edge[1]]
+def static_variables(color, coloring, constraints, edges, weights):
+    color_edges = edges[coloring == color]
+    e1 = color_edges[:, 0]
+    e2 = color_edges[:, 1]
+    d = constraints[coloring == color]
 
-    if w1 == 0 and w2 == 0:
-        return
+    w1 = weights[e1]
+    w2 = weights[e2]
 
-    corr = (w1 + w2) * (np.linalg.norm(p1 - p2) - d) * (p1 - p2) / np.linalg.norm(p1 - p2)
+    w_sum = w1 + w2
+    w_sum[w_sum == 0] = 1
 
-    pos[edge[0]] -= w1 / corr
-    pos[edge[1]] += w2 / corr
+    return d, e1, e2, w1, w2, w_sum

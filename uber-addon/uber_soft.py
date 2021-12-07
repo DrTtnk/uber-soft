@@ -2,16 +2,10 @@ import random
 
 import bpy
 from bpy.types import Operator, Object, Mesh
-import numpy as np
-import pip
 
 from .simulation_engine import *
 
-try:
-    import funcy
-except ImportError:
-    pip.main(['install', 'funcy'])
-    import funcy
+import funcy
 
 soft_instance = None
 
@@ -39,6 +33,62 @@ class SOFT_OT_Action(Operator):
         return {'FINISHED'}
 
 
+class SOFT_OT_ModalTimer(Operator):
+    """Operator which runs its self from a timer"""
+    bl_idname = "soft.modal_timer"
+    bl_label = "Soft Modal Timer"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _timer = None
+    _soft_instance = None
+    _busy = False
+
+    def modal(self, context, event):
+        if event.type in {'RIGHTMOUSE', 'ESC'}:
+            self.cancel(context)
+            return {'CANCELLED'}
+
+        if event.type == 'TIMER' and not self._busy:
+            self._busy = True
+            with funcy.log_durations(print):
+                self._soft_instance.update()
+            self._busy = False
+
+        return {'PASS_THROUGH'}
+
+    def execute(self, context: bpy.context):
+        obj: Object = context.active_object
+
+        if obj is None or obj.type != 'MESH':
+            print("NO ACTIVE MESH")
+            return {'CANCELLED'}
+
+        print("STARTING SOFT")
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.1, window=context.window)
+        self._soft_instance = Soft(obj)
+        wm.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        print("CANCELLING SOFT")
+        color = context.preferences.themes[0].view_3d.space.gradients.high_gradient
+        color.s = 0.0
+        color.h = 0.0
+        wm = context.window_manager
+        wm.event_timer_remove(self._timer)
+
+
+class SOFT_PT_Panel(bpy.types.Panel):
+    bl_label = "Soft"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Soft"
+
+    def draw(self, context: bpy.context):
+        self.layout.operator(SOFT_OT_ModalTimer.bl_idname, text=SOFT_OT_ModalTimer.bl_label)
+
+
 class Soft:
     prev_state = None
     current_state = None
@@ -50,23 +100,21 @@ class Soft:
 
     def __init__(self, obj: Object):
         self.obj = obj
+        self.prev_state, self.edges, self.weights, self.lengths = Soft.read_initial_state(self.obj)
+        self.current_state = self.prev_state.copy()
+
+        with funcy.log_durations(print, label='Complement Step'):
+            complementary = constraints_graph(self.edges)
+        with funcy.log_durations(print, label='Coloring Step'):
+            self.coloring = graph_coloring(complementary)
 
     def update(self):
-        if self.prev_state is None:
-            self.prev_state, self.edges, self.weights, self.lengths = Soft.read_initial_state(self.obj)
-            self.current_state = self.prev_state.copy()
-
-            with funcy.log_durations(print, label='Complement Step'):
-                complementary = constraints_graph(self.edges)
-            with funcy.log_durations(print, label='Coloring Step'):
-                self.coloring = graph_coloring(complementary)
-
-        iterations = 10
+        iterations = 15
 
         new_state = simulation_step(d_t=1.0 / 60,
                                     iterations=iterations,
-                                    pos=self.current_state.copy(),
-                                    prev_pos=self.prev_state.copy(),
+                                    pos=self.current_state,
+                                    prev_pos=self.prev_state,
                                     edges=self.edges,
                                     weights=self.weights,
                                     constraints=self.lengths,
@@ -102,10 +150,6 @@ class Soft:
             except IndexError:
                 weights[v.index] = 0
 
-        # ToDo: remove this two lines
-        weights = np.zeros(vert_count, dtype=np.float64)
-        weights[0] = 1
-
         print(f'Weights: {len(weights)}')
         print(f'Lengths: {len(lengths)}')
         print(f'Edges: {len(edges)}')
@@ -132,20 +176,6 @@ class Soft:
         me.vertices.foreach_set('co', verts)
         verts.shape = (count, 3)
         me.update()
-
-
-class SOFT_PT_Panel(bpy.types.Panel):
-    bl_label = "Soft"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Soft"
-
-    # Draw two buttons side by side: Start and Stop
-    def draw(self, context: bpy.context):
-        layout = self.layout
-        row = layout.row()
-        row.operator("soft.action", text="Start")
-        row.operator("soft.action", text="Stop")
 
 
 def get_vertex_degrees(edges):
@@ -195,36 +225,28 @@ def graph_coloring(edges):
                 vertex_palette[vertex]['size'] += 1
                 vertex_palette[vertex]['palette'] = list(range(vertex_palette[vertex]['size']))
 
-    return np.array([vertex['color'] for vertex in vertex_palette])
+    colors = np.array([vertex['color'] for vertex in vertex_palette])
+    print(f'Colors: {len(set(colors))}')
+    print(f'Color counts: {np.bincount(colors)}')
+
+    return colors
 
 
-def constraints_graph_old(edges):
-    graph = []
-    for current_edge_idx, current_edge in enumerate(edges):
-        for other_edge_idx, other_edge in enumerate(edges):
-            if current_edge_idx == other_edge_idx:
-                continue
-            if (current_edge[0] in other_edge) or (current_edge[1] in other_edge):
-                graph.append(sorted([current_edge_idx, other_edge_idx]))
-
-    # remove duplicates
-    return np.array(list(set(tuple(x) for x in graph)))
-
-
-def constraints_graph(edges):
-    vert_count = np.max(edges) + 1
+def constraints_graph(constraint):
+    vert_count = np.max(constraint) + 1
     verts_to_edges = {vert_idx: [] for vert_idx in range(vert_count)}
-    for edge_idx, edge in enumerate(edges):
+
+    for edge_idx, edge in enumerate(constraint):
         for vert in edge:
             verts_to_edges[vert].append(edge_idx)
 
     graph = []
-    for edge_idx, edge in enumerate(edges):
+    for edge_idx, edge in enumerate(constraint):
         for vert in edge:
             for other_edge_idx in verts_to_edges[vert]:
                 if edge_idx == other_edge_idx:
                     continue
-                other_edge = edges[other_edge_idx]
+                other_edge = constraint[other_edge_idx]
                 if (edge[0] in other_edge) or (edge[1] in other_edge):
                     graph.append(sorted([edge_idx, other_edge_idx]))
 
@@ -233,5 +255,4 @@ def constraints_graph(edges):
 
 
 def is_valid_coloring(edges, coloring):
-    # return all(coloring[edge[0]] != coloring[edge[1]] for edge in edges)
     return np.all(np.diff(coloring) != 0)

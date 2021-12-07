@@ -11,11 +11,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+from .deps import *
 import bpy
 from .uber_soft import *
 
 classes = (
-    SOFT_OT_Action,
+    SOFT_OT_ModalTimer,
     SOFT_PT_Panel
 )
 
@@ -29,22 +30,6 @@ bl_info = {
     "warning": "",
     "category": "Generic"
 }
-
-soft_instance = None
-
-
-def render_pre(scene, b):
-
-    global soft_instance
-    obj: Object = bpy.context.active_object
-
-    if soft_instance is None and obj is not None and obj.type == 'MESH':
-        soft_instance = Soft(obj)
-
-    with funcy.log_durations(print):
-        soft_instance.update()
-
-    print("render_pre")
 
 
 def register():
