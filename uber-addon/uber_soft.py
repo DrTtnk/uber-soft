@@ -1,36 +1,10 @@
 import random
+import funcy
 
 import bpy
 from bpy.types import Operator, Object, Mesh
 
 from .simulation_engine import *
-
-import funcy
-
-soft_instance = None
-
-
-class SOFT_OT_Action(Operator):
-    bl_idname = "soft.action"
-    bl_label = "Action"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context: bpy.context):
-        obj: Object = context.active_object
-        return obj is not None and obj.type == 'MESH'
-
-    def execute(self, context: bpy.context):
-        global soft_instance
-        print("DOING SOFT ACTION")
-
-        if soft_instance is None:
-            soft_instance = Soft(context.active_object)
-
-        with funcy.log_durations(print):
-            soft_instance.update()
-
-        return {'FINISHED'}
 
 
 class SOFT_OT_ModalTimer(Operator):
@@ -65,7 +39,7 @@ class SOFT_OT_ModalTimer(Operator):
 
         print("STARTING SOFT")
         wm = context.window_manager
-        self._timer = wm.event_timer_add(0.1, window=context.window)
+        self._timer = wm.event_timer_add(0.01, window=context.window)
         self._soft_instance = Soft(obj)
         wm.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -109,7 +83,7 @@ class Soft:
             self.coloring = graph_coloring(complementary)
 
     def update(self):
-        iterations = 15
+        iterations = 5
 
         new_state = simulation_step(d_t=1.0 / 60,
                                     iterations=iterations,
@@ -136,6 +110,14 @@ class Soft:
         edges = np.empty(edges_count * 2, dtype=np.int32)
         me.edges.foreach_get('vertices', edges)
         edges.shape = (edges_count, 2)
+
+        faces = np.array([f.vertices for f in obj.data.polygons if len(f.vertices) == 4])
+
+        cross_links_1 = faces[:, [0, 2]]
+        cross_links_2 = faces[:, [1, 3]]
+        cross_links = np.concatenate((cross_links_1, cross_links_2), axis=0)
+
+        edges = np.concatenate((edges, cross_links), axis=0)
 
         edge_a = verts[edges[:, 0]]
         edge_b = verts[edges[:, 1]]
