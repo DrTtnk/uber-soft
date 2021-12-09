@@ -1,5 +1,8 @@
-pip
-numpy
+pip~=21.2.4
+numpy~=1.21.4
 funcy
 fake-bpy-module-latest
-cachetools
+cachetools~=4.2.4
+tetgen~=0.6.0
+pymesh~=1.0.2
+meshpy

@@ -74,7 +74,10 @@ class Soft:
 
     def __init__(self, obj: Object):
         self.obj = obj
-        self.prev_state, self.edges, self.weights, self.lengths = Soft.read_initial_state(self.obj)
+        self.prev_state, self.edges, self.weights, self.lengths = Soft.read_cloth_initial_state(self.obj)
+
+        Soft.read_soft_body_initial_state(self.obj)
+
         self.current_state = self.prev_state.copy()
 
         with funcy.log_durations(print, label='Complement Step'):
@@ -83,7 +86,7 @@ class Soft:
             self.coloring = graph_coloring(complementary)
 
     def update(self):
-        iterations = 5
+        iterations = 50
 
         new_state = simulation_step(d_t=1.0 / 60,
                                     iterations=iterations,
@@ -98,7 +101,7 @@ class Soft:
         self.current_state = new_state
 
     @staticmethod
-    def read_initial_state(obj: Object):
+    def read_cloth_initial_state(obj: Object):
         me: Mesh = obj.data
         vert_count = len(me.vertices)
         edges_count = len(me.edges)
@@ -111,13 +114,14 @@ class Soft:
         me.edges.foreach_get('vertices', edges)
         edges.shape = (edges_count, 2)
 
-        faces = np.array([f.vertices for f in obj.data.polygons if len(f.vertices) == 4])
+        quads = np.array([f.vertices for f in obj.data.polygons if len(f.vertices) == 4])
 
-        cross_links_1 = faces[:, [0, 2]]
-        cross_links_2 = faces[:, [1, 3]]
-        cross_links = np.concatenate((cross_links_1, cross_links_2), axis=0)
+        if len(quads):
+            cross_links_1 = quads[:, [0, 2]]
+            cross_links_2 = quads[:, [1, 3]]
+            cross_links = np.concatenate((cross_links_1, cross_links_2), axis=0)
 
-        edges = np.concatenate((edges, cross_links), axis=0)
+            edges = np.concatenate((edges, cross_links), axis=0)
 
         edge_a = verts[edges[:, 0]]
         edge_b = verts[edges[:, 1]]
@@ -138,6 +142,37 @@ class Soft:
         print(f'Verts: {len(verts)}')
 
         return verts, edges, 1 - weights, lengths
+
+    @staticmethod
+    def read_soft_body_initial_state(obj: Object):
+        from meshpy.tet import MeshInfo, build
+
+        me: Mesh = obj.data
+        vert_count = len(me.vertices)
+
+        verts = np.empty(vert_count * 3, dtype=np.float64)
+        me.vertices.foreach_get('co', verts)
+        verts.shape = (vert_count, 3)
+
+        mesh_info = MeshInfo()
+        mesh_info.set_points(np.array([v for v in verts]))
+        mesh_info.set_facets(np.array([f.vertices for f in me.polygons]))
+        mesh = build(mesh_info, verbose=True)
+
+        tets = np.array([t for t in mesh.elements])
+
+        tets_pos = verts[tets]
+        tets_pos_trans = tets_pos[:, [0, 1, 2]] - tets_pos[:, 3, np.newaxis]
+        tets_vol = 1 / 6 * np.abs((tets_pos[:, 0] * np.cross(tets_pos[:, 1], tets_pos[:, 2], axis=1)).sum(1))
+
+        tets_edges = np.concatenate([
+            tets[:, [0, 1]], tets[:, [0, 2]], tets[:, [0, 3]],
+            tets[:, [1, 2]], tets[:, [1, 3]], tets[:, [2, 3]],
+        ])
+
+        tets_edges = np.unique(tets_edges, axis=0)
+
+        return tets_edges
 
     @staticmethod
     def read_vertex_pos(obj: bpy.types.Object):
@@ -179,6 +214,7 @@ def graph_coloring(edges):
     vertex_palette = [{
         'palette': list(range(degree // min_degree)),
         'size': degree // min_degree,
+        'color': None
     } for degree in vertex_degrees]
 
     while vertex_set:
