@@ -76,7 +76,7 @@ class Soft:
         self.obj = obj
         self.prev_state, self.edges, self.weights, self.lengths = Soft.read_cloth_initial_state(self.obj)
 
-        Soft.read_soft_body_initial_state(self.obj)
+        # Soft.read_soft_body_initial_state(self.obj)
 
         self.current_state = self.prev_state.copy()
 
@@ -86,7 +86,7 @@ class Soft:
             self.coloring = graph_coloring(complementary)
 
     def update(self):
-        iterations = 50
+        iterations = 10
 
         new_state = simulation_step(d_t=1.0 / 60,
                                     iterations=iterations,
@@ -103,45 +103,36 @@ class Soft:
     @staticmethod
     def read_cloth_initial_state(obj: Object):
         me: Mesh = obj.data
-        vert_count = len(me.vertices)
         edges_count = len(me.edges)
 
-        verts = np.empty(vert_count * 3, dtype=np.float64)
-        me.vertices.foreach_get('co', verts)
-        verts.shape = (vert_count, 3)
+        verts = Soft.read_vertex_world_pos(obj)
 
         edges = np.empty(edges_count * 2, dtype=np.int32)
         me.edges.foreach_get('vertices', edges)
         edges.shape = (edges_count, 2)
 
-        quads = np.array([f.vertices for f in obj.data.polygons if len(f.vertices) == 4])
+        quads = np.array([f.vertices for f in me.polygons if len(f.vertices) == 4])
 
         if len(quads):
-            cross_links_1 = quads[:, [0, 2]]
-            cross_links_2 = quads[:, [1, 3]]
-            cross_links = np.concatenate((cross_links_1, cross_links_2), axis=0)
-
+            cross_links = np.concatenate((quads[:, [0, 2]], quads[:, [1, 3]]), axis=0)
             edges = np.concatenate((edges, cross_links), axis=0)
 
-        edge_a = verts[edges[:, 0]]
-        edge_b = verts[edges[:, 1]]
-        lengths = np.linalg.norm(edge_b - edge_a, axis=1)
-
-        weights = np.zeros(vert_count, dtype=np.float64)
-        for v in obj.data.vertices:
-            try:
+        weights = np.zeros(len(me.vertices), dtype=np.float64)
+        for v in me.vertices:
+            if len(v.groups):
                 weights[v.index] = v.groups[0].weight
-            except RuntimeError:
-                weights[v.index] = 0
-            except IndexError:
-                weights[v.index] = 0
+
+        weights = 1 - weights
+        edges = edges[weights[edges].sum(axis=1) != 0]
+
+        lengths = np.linalg.norm(verts[edges[:, 1]] - verts[edges[:, 0]], axis=1)
 
         print(f'Weights: {len(weights)}')
         print(f'Lengths: {len(lengths)}')
         print(f'Edges: {len(edges)}')
         print(f'Verts: {len(verts)}')
 
-        return verts, edges, 1 - weights, lengths
+        return verts, edges, weights, lengths
 
     @staticmethod
     def read_soft_body_initial_state(obj: Object):
@@ -175,7 +166,7 @@ class Soft:
         return tets_edges
 
     @staticmethod
-    def read_vertex_pos(obj: bpy.types.Object):
+    def read_vertex_world_pos(obj: bpy.types.Object):
         me: Mesh = obj.data
         vert_count = len(me.vertices)
 
@@ -183,16 +174,24 @@ class Soft:
         me.vertices.foreach_get('co', verts)
         verts.shape = (vert_count, 3)
 
-        return verts
+        return Soft.apply_transform(np.array(obj.matrix_world), verts)
 
     @staticmethod
     def write_vertex_pos(obj: bpy.types.Object, verts: np.ndarray):
         me: Mesh = obj.data
         count = len(me.vertices)
-        verts.shape = count * 3
-        me.vertices.foreach_set('co', verts)
-        verts.shape = (count, 3)
+
+        local_verts = Soft.apply_transform(np.linalg.inv(obj.matrix_world), verts)
+        local_verts.shape = count * 3
+
+        me.vertices.foreach_set('co', local_verts)
         me.update()
+
+    @staticmethod
+    def apply_transform(t_mat, verts):
+        mat = t_mat[:3, :3].T
+        loc = t_mat[:3, 3]
+        return verts @ mat + loc
 
 
 def get_vertex_degrees(edges):
@@ -219,20 +218,18 @@ def graph_coloring(edges):
 
     while vertex_set:
         for vertex in vertex_set:
-            random_color = random.choice(vertex_palette[vertex]['palette'])
-            vertex_palette[vertex]['color'] = random_color
+            vertex_palette[vertex]['color'] = random.choice(vertex_palette[vertex]['palette'])
 
         # Check if the coloring is valid
         I = set()
         for vertex in vertex_set:
             col = vertex_palette[vertex]['color']
-            neighbours_colors = {vertex_palette[neighbour]['color']
-                                 for neighbour in vertex_neighbors[vertex]}
+            neighbours_colors = {vertex_palette[neighbour]['color'] for neighbour in list(vertex_neighbors[vertex])}
 
             if col not in neighbours_colors:
                 I.add(vertex)
                 # remove color from all neighbours
-                for neighbour in vertex_neighbors[vertex]:
+                for neighbour in list(vertex_neighbors[vertex]):
                     if col in vertex_palette[neighbour]['palette']:
                         vertex_palette[neighbour]['palette'].remove(col)
 
