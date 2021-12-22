@@ -46,11 +46,7 @@ class SOFT_OT_ModalTimer(Operator):
 
     def cancel(self, context):
         print("CANCELLING SOFT")
-        color = context.preferences.themes[0].view_3d.space.gradients.high_gradient
-        color.s = 0.0
-        color.h = 0.0
-        wm = context.window_manager
-        wm.event_timer_remove(self._timer)
+        context.window_manager.event_timer_remove(self._timer)
 
 
 class SOFT_PT_Panel(bpy.types.Panel):
@@ -127,11 +123,6 @@ class Soft:
 
         lengths = np.linalg.norm(verts[edges[:, 1]] - verts[edges[:, 0]], axis=1)
 
-        print(f'Weights: {len(weights)}')
-        print(f'Lengths: {len(lengths)}')
-        print(f'Edges: {len(edges)}')
-        print(f'Verts: {len(verts)}')
-
         return verts, edges, weights, lengths
 
     @staticmethod
@@ -189,9 +180,7 @@ class Soft:
 
     @staticmethod
     def apply_transform(t_mat, verts):
-        mat = t_mat[:3, :3].T
-        loc = t_mat[:3, 3]
-        return verts @ mat + loc
+        return verts @ t_mat[:3, :3].T + t_mat[:3, 3]
 
 
 def get_vertex_degrees(edges):

@@ -78,10 +78,11 @@ def continuous_collision_detection(p0, p1,
                                    a0, b0, c0,
                                    a1, b1, c1):
     ap0 = p0 - a0
-    ap1 = p1 - a1
     ab0 = b0 - a0
-    ab1 = b1 - a1
     ac0 = c0 - a0
+
+    ap1 = p1 - a1
+    ab1 = b1 - a1
     ac1 = c1 - a1
 
     dap = ap1 - ap0
@@ -97,63 +98,32 @@ def continuous_collision_detection(p0, p1,
     c = np.dot(ap0, n_1) + np.dot(dap, n_0)
     d = np.dot(ap0, n_0)
 
-    r0, r1, r2 = np.roots([a, d, c, b])
+    roots = np.roots([a, d, c, b])
+    roots = roots[np.isreal(roots) & (roots > 0) & (roots < 1)]
 
     def validate(t):
         return validate_t(ap0, ab0, ac0, dap, dab, dac, t)
 
-    validate0 = validate(r0)
-    if validate0.collided:
-        return validate0
-
-    validate1 = validate(r1)
-    return validate1.collided and validate1 or validate(r2)
+    return next(validate(r) for r in roots)
 
 
-#     private static CollisionStruct ValidateT(Vector3 AP0, Vector3 AB0, Vector3 AC0,
-#                                              Vector3 dAP, Vector3 dAB, Vector3 dAC,
-#                                              float t)
-#     {
-#         if (t <= 0 || t >= 1)
-#             return new CollisionStruct(false, 0, 0, 0);
-#
-#         var APt = AP0 + dAP * t;
-#         var ABt = AB0 + dAB * t;
-#         var ACt = AC0 + dAC * t;
-#
-#         var detXY = ABt.x * ACt.y - ABt.y * ACt.x;
-#         if (Math.Abs(detXY) > Mathf.Epsilon)
-#         {
-#             var u = (APt.x * ACt.y - ACt.x * APt.y) / detXY;
-#             var v = (ABt.x * APt.y - APt.x * ABt.y) / detXY;
-#             return new CollisionStruct(t, u, v);
-#         }
-#
-#         var detXZ = ABt.x * ACt.z - ABt.z * ACt.x;
-#         if (Math.Abs(detXZ) > Mathf.Epsilon)
-#         {
-#             var u = (APt.x * ACt.z - ACt.x * APt.z) / detXZ;
-#             var v = (ABt.x * APt.z - APt.x * ABt.z) / detXZ;
-#             return new CollisionStruct(t, u, v);
-#         }
-#
-#         var detYZ = ABt.y * ACt.z - ABt.z * ACt.y;
-#         if (Math.Abs(detYZ) > Mathf.Epsilon)
-#         {
-#             var u = (APt.y * ACt.z - ACt.y * APt.z) / detYZ;
-#             var v = (ABt.y * APt.z - APt.y * ABt.z) / detYZ;
-#             return new CollisionStruct(t, u, v);
-#         }
-#
-#         return new CollisionStruct(false);
-#     }
-
-def validate_t(AP0, AB0, AC0, dAP, dAB, dAC, t):
+def validate_t(ap0, ab0, ac0, dAP, dAB, dAC, t):
     if t <= 0 or t >= 1:
-        return None
+        return False
 
-    APt = AP0 + dAP * t
-    ABt = AB0 + dAB * t
-    ACt = AC0 + dAC * t
+    APt = ap0 + dAP * t
+    ABt = ab0 + dAB * t
+    ACt = ac0 + dAC * t
 
-    detXY = ABt[0] * ACt[]
+    u = np.cross(ABt, ACt)
+    v = np.cross(ACt, APt)
+    w = np.cross(APt, ABt)
+
+    if np.dot(u, v) < 1e-6:
+        return False
+
+    if np.dot(u, w) < 1e-6:
+        return False
+
+    return True
+
