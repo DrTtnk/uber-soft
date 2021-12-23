@@ -82,7 +82,10 @@ class Soft:
             self.coloring = graph_coloring(complementary)
 
     def update(self):
-        iterations = 10
+        iterations = 5
+
+        # set the current state as a linear interpolation between the current state and the current vertex positions
+        self.current_state = self.weights[:, np.newaxis] * self.current_state + (1 - self.weights)[:, np.newaxis] * Soft.read_vertex_pos(self.obj)
 
         new_state = simulation_step(d_t=1.0 / 60,
                                     iterations=iterations,
@@ -101,7 +104,7 @@ class Soft:
         me: Mesh = obj.data
         edges_count = len(me.edges)
 
-        verts = Soft.read_vertex_world_pos(obj)
+        verts = Soft.read_vertex_pos(obj)
 
         edges = np.empty(edges_count * 2, dtype=np.int32)
         me.edges.foreach_get('vertices', edges)
@@ -157,7 +160,7 @@ class Soft:
         return tets_edges
 
     @staticmethod
-    def read_vertex_world_pos(obj: bpy.types.Object):
+    def read_vertex_pos(obj: bpy.types.Object):
         me: Mesh = obj.data
         vert_count = len(me.vertices)
 
